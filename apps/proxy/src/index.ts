@@ -158,7 +158,7 @@ h1{font-size:1.4rem;margin:0 0 .4rem}p{color:#555;margin:0}code{background:#f4f4
 
 app.listen(config.proxyPort, () => {
   console.log(`[proxy] listening on http://localhost:${config.proxyPort}`);
-  console.log(`[proxy] deployments served at http://<id>.${config.rootDomain}:${config.proxyPort}`);
+  console.log(`[proxy] deployments served at ${deploymentUrl('<id>')}`);
 });
 
 async function shutdown() {

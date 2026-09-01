@@ -114,7 +114,11 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     profiles: ["tls"]
-    depends_on: [upload, proxy]
+    depends_on:
+      # service_started is not enough: Caddy would accept traffic and 502
+      # while upload is still booting. Both images define a HEALTHCHECK.
+      upload: { condition: service_healthy }
+      proxy: { condition: service_healthy }
     environment:
       # Both MUST be set in .env.prod before enabling this profile.
       ROOT_DOMAIN: ${ROOT_DOMAIN:-localhost}
