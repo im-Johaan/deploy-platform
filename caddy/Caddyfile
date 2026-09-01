@@ -9,13 +9,22 @@
 	}
 }
 
-# The platform itself: UI + API.
+# The platform itself: UI + API. Password-protected — without this, anyone
+# who finds the domain can run builds on your machine and publish pages
+# under your name.
 {$ROOT_DOMAIN} {
-	reverse_proxy upload:3002
+	basic_auth {
+		{$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+	}
+	reverse_proxy upload:3002 {
+		# So the upload service can record who created each deployment.
+		header_up X-Forwarded-For {remote_host}
+	}
 }
 
-# Every deployment. Certificates are issued per hostname on first request,
-# so no wildcard certificate and no DNS provider plugin is needed.
+# Every deployment. Public by design — these are the sites you publish.
+# Certificates are issued per hostname on first request, so no wildcard
+# certificate and no DNS provider plugin is needed.
 *.{$ROOT_DOMAIN} {
 	tls {
 		on_demand

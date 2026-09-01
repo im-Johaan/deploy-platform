@@ -14,6 +14,9 @@ import {
 const app = express();
 const redis = createRedis();
 
+// Caddy sets X-Forwarded-For; without this req.ip is the proxy's own address.
+app.set('trust proxy', 1);
+
 app.use(express.json({ limit: '16kb' }));
 
 // express.json throws on malformed bodies; answer 400 rather than 500.
@@ -70,9 +73,10 @@ app.post('/deploy', asyncHandler(async (req, res) => {
     url,
     ...(input.branch === undefined ? {} : { branch: input.branch }),
     ...(input.outputDir === undefined ? {} : { outputDir: input.outputDir }),
+    ...(req.ip === undefined ? {} : { createdBy: req.ip }),
   });
 
-  console.log(`[upload] ${id} <- ${input.repoUrl}`);
+  console.log(`[upload] ${id} <- ${input.repoUrl} (from ${req.ip ?? 'unknown'})`);
 
   res.status(202).json({
     id,
@@ -85,6 +89,23 @@ app.post('/deploy', asyncHandler(async (req, res) => {
   // Deliberately not awaited: the response is already sent. The pipeline
   // records its own failures on the deployment record.
   void runUploadPipeline(redis, deployment);
+}));
+
+/** Everything ever deployed, newest first — the audit view. */
+app.get('/deployments', asyncHandler(async (_req, res) => {
+  const ids: string[] = [];
+  let cursor = '0';
+  do {
+    const [next, keys] = await redis.scan(cursor, 'MATCH', 'dep:*', 'COUNT', 200);
+    cursor = next;
+    ids.push(...keys.map((k) => k.slice('dep:'.length)));
+  } while (cursor !== '0');
+
+  const deployments = (await Promise.all(ids.map((id) => getDeployment(redis, id))))
+    .filter((d): d is NonNullable<typeof d> => d !== null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  res.json({ count: deployments.length, deployments });
 }));
 
 app.get('/status/:id', asyncHandler(async (req, res) => {

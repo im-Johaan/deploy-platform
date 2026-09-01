@@ -33,6 +33,7 @@ subdomain → storage prefix.
 | `POST /deploy`     | `{repoUrl, branch?, outputDir?}` → `202` with id + URL. Clone runs in the background. |
 | `GET /status/:id`  | The deployment record, or `404`.                        |
 | `GET /logs/:id`    | Build logs. Streams as SSE with `Accept: text/event-stream`, otherwise JSON. |
+| `GET /deployments` | Every deployment, newest first, with the IP that created it. |
 
 ### Build worker
 
@@ -165,6 +166,20 @@ PUBLIC_PORT=443
 
 docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tls up -d --build
 ```
+
+**The UI is password-protected.** Anyone who can reach the upload service can
+run builds on your machine and publish pages under your domain, so Caddy puts
+HTTP basic auth in front of it. Deployment subdomains stay public — those are
+the sites you are publishing. Generate the hash with:
+
+```bash
+docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
+```
+
+and set `ADMIN_USER` / `ADMIN_PASSWORD_HASH` in `.env.prod`.
+
+`GET /deployments` lists everything ever deployed, newest first, including the
+client IP that created it (`createdBy`), so you can see who did what.
 
 **On-demand TLS, not a wildcard certificate.** Deployment subdomains are created
 dynamically, so instead of one `*.domain` certificate (which would require the

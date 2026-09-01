@@ -20,6 +20,8 @@ export interface Deployment {
   outputDir?: string;
   /** Populated only when status is FAILED. */
   error?: string;
+  /** Who created it, for auditing. Behind a proxy this is X-Forwarded-For. */
+  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }

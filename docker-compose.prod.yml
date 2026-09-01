@@ -123,6 +123,8 @@ services:
       # Both MUST be set in .env.prod before enabling this profile.
       ROOT_DOMAIN: ${ROOT_DOMAIN:-localhost}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
     ports:
       - "80:80"
       - "443:443"
