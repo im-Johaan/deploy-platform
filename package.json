@@ -1,0 +1,32 @@
+{
+  "name": "automated-deployment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n upload,worker,proxy -c cyan,magenta,green \"npm:dev:upload\" \"npm:dev:worker\" \"npm:dev:proxy\"",
+    "dev:upload": "npm run dev --workspace @adp/upload",
+    "dev:worker": "npm run dev --workspace @adp/worker",
+    "dev:proxy": "npm run dev --workspace @adp/proxy",
+    "typecheck": "tsc --build --verbose",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "smoke": "tsx scripts/smoke.ts",
+    "test": "node --import tsx --test \"apps/**/*.test.ts\" \"packages/**/*.test.ts\"",
+    "start:upload": "node --import tsx apps/upload/src/index.ts",
+    "start:worker": "node --import tsx apps/worker/src/index.ts",
+    "start:proxy": "node --import tsx apps/proxy/src/index.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "tsx": "^4.19.2"
+  }
+}

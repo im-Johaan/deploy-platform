@@ -1,0 +1,24 @@
+{
+	email {$ACME_EMAIL}
+
+	# Ask the upload service before issuing a certificate for a hostname.
+	# This is what stops strangers from burning the Let's Encrypt rate limit
+	# by requesting subdomains that were never deployed.
+	on_demand_tls {
+		ask http://upload:3002/tls-check
+	}
+}
+
+# The platform itself: UI + API.
+{$ROOT_DOMAIN} {
+	reverse_proxy upload:3002
+}
+
+# Every deployment. Certificates are issued per hostname on first request,
+# so no wildcard certificate and no DNS provider plugin is needed.
+*.{$ROOT_DOMAIN} {
+	tls {
+		on_demand
+	}
+	reverse_proxy proxy:3000
+}

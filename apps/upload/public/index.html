@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deploy</title>
+<style>
+  :root{
+    --bg:#fbfbfa; --fg:#18181b; --muted:#71717a; --line:#e4e4e7;
+    --card:#fff; --accent:#2563eb; --ok:#15803d; --bad:#b91c1c;
+    --logbg:#f4f4f5;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0c0c0d; --fg:#f4f4f5; --muted:#a1a1aa; --line:#27272a;
+           --card:#141416; --accent:#60a5fa; --ok:#4ade80; --bad:#f87171;
+           --logbg:#09090b; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+       display:flex;justify-content:center;padding:6vh 1.25rem 4rem}
+  main{width:100%;max-width:44rem}
+  h1{font-size:1.5rem;margin:0 0 .25rem;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 1.75rem}
+  form{display:flex;gap:.5rem}
+  input{flex:1;min-width:0;padding:.7rem .85rem;border:1px solid var(--line);
+        border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  button{padding:.7rem 1.1rem;border:0;border-radius:8px;background:var(--accent);
+         color:#fff;font:inherit;font-weight:550;cursor:pointer;white-space:nowrap}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .panel{margin-top:1.5rem;border:1px solid var(--line);border-radius:10px;
+         background:var(--card);overflow:hidden}
+  .panel[hidden]{display:none}
+  .bar{display:flex;align-items:center;gap:.6rem;padding:.7rem .9rem;
+       border-bottom:1px solid var(--line)}
+  .pill{font-size:.75rem;font-weight:600;letter-spacing:.04em;padding:.2rem .55rem;
+        border-radius:999px;background:var(--logbg);color:var(--muted)}
+  .pill.ok{color:var(--ok)} .pill.bad{color:var(--bad)}
+  .spin{width:.8rem;height:.8rem;border:2px solid var(--line);
+        border-top-color:var(--accent);border-radius:50%;animation:s .7s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .spin[hidden]{display:none}
+  .id{margin-left:auto;font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+  pre{margin:0;padding:.85rem .9rem;background:var(--logbg);max-height:22rem;overflow:auto;
+      font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;
+      word-break:break-word}
+  .result{padding:.9rem;border-top:1px solid var(--line)}
+  .result[hidden]{display:none}
+  .result a{display:block;font-size:1.05rem;font-weight:600;color:var(--accent);
+            text-decoration:none;word-break:break-all}
+  .result a:hover{text-decoration:underline}
+  .err{color:var(--bad);font-size:.9rem;margin:.15rem 0 0}
+  .hint{color:var(--muted);font-size:.8rem;margin:.35rem 0 0}
+</style>
+</head>
+<body>
+<main>
+  <h1>Deploy from GitHub</h1>
+  <p class="sub">Paste a repository. It gets cloned, built in a container, and served on its own subdomain.</p>
+
+  <form id="form">
+    <input id="repo" type="url" required spellcheck="false"
+           placeholder="https://github.com/sveltejs/template"
+           value="https://github.com/sveltejs/template">
+    <button id="go" type="submit">Deploy</button>
+  </form>
+  <p class="hint">Needs a <code>package.json</code> with a <code>build</code> script. Output is picked up from dist, build, out or public.</p>
+
+  <section class="panel" id="panel" hidden>
+    <div class="bar">
+      <div class="spin" id="spin"></div>
+      <span class="pill" id="pill">queued</span>
+      <span class="id" id="idlabel"></span>
+    </div>
+    <pre id="log"></pre>
+    <div class="result" id="result" hidden></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const form = $('form'), repo = $('repo'), go = $('go');
+const panel = $('panel'), pill = $('pill'), spin = $('spin');
+const logEl = $('log'), result = $('result'), idLabel = $('idlabel');
+let source = null;
+
+function setStatus(text, kind) {
+  pill.textContent = text.toLowerCase();
+  pill.className = 'pill' + (kind ? ' ' + kind : '');
+}
+
+function append(line) {
+  const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  // Strip the ISO timestamp the server prefixes; the order is enough here.
+  logEl.textContent += line.replace(/^\[[^\]]+\]\s*/, '') + '\n';
+  if (atBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function finish(status, url) {
+  spin.hidden = true;
+  source?.close();
+  result.hidden = false;
+
+  if (status === 'READY') {
+    setStatus('ready', 'ok');
+    result.innerHTML = '';
+    const a = document.createElement('a');
+    a.href = url; a.textContent = url; a.target = '_blank'; a.rel = 'noopener';
+    result.append(a);
+  } else {
+    setStatus('failed', 'bad');
+    let message = 'Build failed.';
+    try {
+      const res = await fetch('/status/' + encodeURIComponent(idLabel.textContent));
+      if (res.ok) message = (await res.json()).error || message;
+    } catch {}
+    const p = document.createElement('p');
+    p.className = 'err'; p.textContent = message;
+    result.replaceChildren(p);
+  }
+  go.disabled = false;
+  go.textContent = 'Deploy';
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  source?.close();
+
+  go.disabled = true; go.textContent = 'Deploying…';
+  panel.hidden = false; result.hidden = true; spin.hidden = false;
+  logEl.textContent = ''; setStatus('starting');
+
+  let deployment;
+  try {
+    const res = await fetch('/deploy', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ repoUrl: repo.value.trim() }),
+    });
+    deployment = await res.json();
+    if (!res.ok) throw new Error(deployment.error || 'request failed');
+  } catch (err) {
+    spin.hidden = true; setStatus('rejected', 'bad');
+    result.hidden = false;
+    result.innerHTML = '<p class="err"></p>';
+    result.firstChild.textContent = err.message;
+    go.disabled = false; go.textContent = 'Deploy';
+    return;
+  }
+
+  idLabel.textContent = deployment.id;
+
+  // Live build output, replayed from the start then streamed.
+  source = new EventSource('/logs/' + deployment.id);
+  source.addEventListener('log', (e) => append(e.data));
+  source.addEventListener('status', (e) => {
+    if (e.data !== 'READY' && e.data !== 'FAILED') setStatus(e.data);
+  });
+  source.addEventListener('end', (e) => finish(e.data, deployment.url));
+  source.onerror = () => {
+    // Connection dropped; fall back to polling so the UI still resolves.
+    source.close();
+    const poll = setInterval(async () => {
+      const res = await fetch('/status/' + deployment.id);
+      const d = await res.json();
+      if (d.status === 'READY' || d.status === 'FAILED') {
+        clearInterval(poll);
+        finish(d.status, deployment.url);
+      }
+    }, 1500);
+  };
+});
+</script>
+</body>
+</html>

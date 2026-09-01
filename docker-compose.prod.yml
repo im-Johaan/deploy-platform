@@ -1,0 +1,134 @@
+# Full stack: infrastructure + all three services.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# docker-compose.yml (the dev file) stays infrastructure-only, because in dev
+# the services run on the host via `npm run dev`.
+
+services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Not published: only the services need it.
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Console left unpublished by default; expose deliberately if you want it.
+
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-deployments} &&
+      echo 'bucket ready'
+      "
+
+  upload:
+    build: { context: ., target: upload }
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-deployments}
+      UPLOAD_PORT: 3002
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-localhost}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-http}
+      PUBLIC_PORT: ${PUBLIC_PORT:-3000}
+    ports:
+      # Loopback only — Caddy reaches it over the compose network.
+      - "127.0.0.1:${UPLOAD_PUBLISH_PORT:-3002}:3002"
+
+  worker:
+    build: { context: ., target: worker }
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-deployments}
+    volumes:
+      # Build containers are started on the HOST daemon as siblings, not
+      # children. This grants root-equivalent access to the host — see the
+      # security note in the README before exposing this beyond a private VM.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  proxy:
+    build: { context: ., target: proxy }
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${S3_BUCKET:-deployments}
+      PROXY_PORT: 3000
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-localhost}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-http}
+      PUBLIC_PORT: ${PUBLIC_PORT:-3000}
+    ports:
+      # Loopback only — Caddy reaches it over the compose network.
+      - "127.0.0.1:${PROXY_PUBLISH_PORT:-3000}:3000"
+
+  # TLS terminator and router. Only this service faces the internet.
+  #   <ROOT_DOMAIN>    -> upload (UI + API)
+  #   *.<ROOT_DOMAIN>  -> proxy  (deployments)
+  # Certificates are obtained per hostname on first request (on-demand TLS),
+  # gated by upload's /tls-check, so no wildcard cert or DNS plugin is needed.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["tls"]
+    depends_on: [upload, proxy]
+    environment:
+      # Both MUST be set in .env.prod before enabling this profile.
+      ROOT_DOMAIN: ${ROOT_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # issued certificates — persist this
+      - caddy-config:/config
+
+volumes:
+  redis-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
